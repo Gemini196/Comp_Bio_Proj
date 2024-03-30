@@ -5,20 +5,28 @@ import os
 import random
 import sys
 import math
+import statistics
+from initial_states import shape_initial_configuration
 
 ################ Global variables ################
 '''
 Each cell has an id which is a tuple comprised of the id's of its parent-cells.
 example: for parents with ids: (2,) and (3,), the id of the child-cell will be (2,3).
 
-Each id tuple has a unique symbol to represent it in the printed matrix.
-The symbol is a number between 2 and N-1 (N being the highest unused symbol).
+Each id tuple has a unique symbol (1-N) to represent it in the printed grid. (N being the highest unused symbol).
 
-population_ids_dict : a dictionary that matches id tuples to symbols. {id_tuple:{symbol,count}}
-highest unused symbol : The highest number that hasn't been matched with an id tuple yet.
+POPULATION_IDS_DICT : a dictionary that matches id tuples to symbols. {id_tuple:{symbol,count}}
+HIGHEST_UNUSED_SYMBOL : The highest number that hasn't been matched with an id tuple yet.
+ADDEND_INTER_POPULATION : Fitness addend to parent-cells for inter population reproduction.
+ADDEND_INTRA_POPULATION : Fitness addend to parent-cells for intra population reproduction.
+MAX_FITNESS_SCORE_DIFF : Maximum fitness score diff allowed between two cell for reproduction.
 '''
-highest_unused_symbol = 2
-population_ids_dict = {}
+HIGHEST_UNUSED_SYMBOL = 1
+POPULATION_IDS_DICT = {}
+ADDEND_INTER_POPULATION = 2 # default
+ADDEND_INTRA_POPULATION = 1 # default
+MAX_FITNESS_SCORE_DIFF = sys.maxsize # max INT
+
 
 # Written by: Noa Gaon
 class Cell:
@@ -29,26 +37,26 @@ class Cell:
     population_ids = None #tuple
 
     def __init__(self, population_ids1, population_ids2=None, fitness_score1=None, fitness_score2=None):
-        global highest_unused_symbol, population_ids_dict
+        global HIGHEST_UNUSED_SYMBOL, POPULATION_IDS_DICT
         self.population_ids = tuple(population_ids1) # Case 1: cell is an initial cell (no parents)
         if population_ids2:                   # Case 2: cell created by two parent cells
             self.population_ids = get_new_population_ids(population_ids1, population_ids2)
             self.fitness_score = math.floor((fitness_score1+fitness_score2)/2)
 
-        if self.population_ids not in population_ids_dict: # New population (no matching symbol)
-            population_ids_dict[self.population_ids] = {
-                'symbol': highest_unused_symbol,
+        if self.population_ids not in POPULATION_IDS_DICT: # New population (no matching symbol)
+            POPULATION_IDS_DICT[self.population_ids] = {
+                'symbol': HIGHEST_UNUSED_SYMBOL,
                 'count': 1
             }
-            highest_unused_symbol += 1
+            HIGHEST_UNUSED_SYMBOL += 1
         else:
-            population_ids_dict[self.population_ids]['count']+=1
+            POPULATION_IDS_DICT[self.population_ids]['count'] += 1
 
-        self.symbol = population_ids_dict[self.population_ids]['symbol']
+        self.symbol = POPULATION_IDS_DICT[self.population_ids]['symbol']
 
     def get_symbol(self):
-        global population_ids_dict
-        return population_ids_dict[self.population_ids]['symbol']
+        global POPULATION_IDS_DICT
+        return POPULATION_IDS_DICT[self.population_ids]['symbol']
 
     def get_population_ids(self):
         return self.population_ids
@@ -58,8 +66,6 @@ class Cell:
 
     def set_fitness_score(self, new_fitness_score):
         self.fitness_score = new_fitness_score
-
-
 
 
 # Written by: Noa Gaon
@@ -104,11 +110,11 @@ def divide_shapes(grid):
 
     Returns:  a grid such that each continuous block of "living" cells is marked by a different symbol.
     """
-    global highest_unused_symbol, population_ids_dict
+    global HIGHEST_UNUSED_SYMBOL, POPULATION_IDS_DICT
     for i in range(len(grid)):
         for j in range(len(grid[0])):
             if grid[i][j] == 1: # living cell
-                dfs(grid, i, j, highest_unused_symbol)
+                dfs(grid, i, j, HIGHEST_UNUSED_SYMBOL)
     return grid
 
 
@@ -178,13 +184,62 @@ def create_initial_grid(rows, cols):
 
 
 # Written by: Noa Gaon
-def get_number_of_extinct_populations():
+def calculate_variance():
     """
-    Returns: The amount of extinct populations (= population ids tuple of which counter equals 0)
+    :return: The variance of an initial population_id appearing in different populations
     """
-    global population_ids_dict
-    zero_count = sum(1 for value in population_ids_dict.values() if value['count'] == 0)
-    return zero_count
+    global POPULATION_IDS_DICT
+    # Create a dict to hold the counts of each initial population
+    init_pop_counts = {}
+    # Count the occurrences of each initial population id across all keys
+    for key in POPULATION_IDS_DICT:
+        for pop_id in key:
+            init_pop_counts[pop_id] = init_pop_counts.get(pop_id, 0) + POPULATION_IDS_DICT[key]['count']
+    # Calculate variance based on string counts
+    mean_count = sum(init_pop_counts.values()) / len(init_pop_counts)
+    variance = sum((count - mean_count) ** 2 for count in init_pop_counts.values()) / len(init_pop_counts)
+
+    return variance
+
+
+# Written by: Noa Gaon
+def calc_statistics(grid):
+    global POPULATION_IDS_DICT
+    rows = len(grid)
+    cols = len(grid[0])
+
+    living_cells_counter = sum(1 for row in grid for cell in row if cell != 0)
+    extinct_pop_count = sum(1 for value in POPULATION_IDS_DICT.values() if value['count'] == 0)
+    pop_count = len(POPULATION_IDS_DICT)-extinct_pop_count
+    fitness_score_sum = sum(cell.get_fitness_score() for row in grid for cell in row if cell != 0)
+
+    # Get the maximum appearance count among all populations
+    max_appearances_count = max(POPULATION_IDS_DICT.values(), key=lambda x: x['count'])['count']
+    # Find population_ids with the maximum count
+    most_common_population = [k for k, v in POPULATION_IDS_DICT.items() if v['count'] == max_appearances_count]\
+        if living_cells_counter > 0 else ''
+
+    # Create a list of string lengths based on key-value pairs in the dictionary
+    id_lengths = [len(key) for key, count in POPULATION_IDS_DICT.items() for _ in
+                  range(POPULATION_IDS_DICT[key]['count'])]
+    id_len_sum = sum(id_lengths)
+
+    # Calculate averages
+    avg_fitness_score = fitness_score_sum / living_cells_counter if living_cells_counter > 0 else 0
+    avg_num_of_ancestors = id_len_sum / living_cells_counter if living_cells_counter > 0 else 0
+
+    id_lengths.sort()  # Sort the list of string lengths
+    med_num_of_ancestors = statistics.median(id_lengths) if living_cells_counter > 0 else 0  # Calculate the median
+
+    result_dict = {'living_cells_counter': living_cells_counter,
+                   'extinct_pop_count': extinct_pop_count,
+                   'pop_count': pop_count,
+                   'avg_fitness_score': avg_fitness_score,
+                   'avg_num_of_ancestors': avg_num_of_ancestors,
+                   'med_num_of_ancestors': med_num_of_ancestors,
+                   'most_common_population': most_common_population,
+                   'variance': calculate_variance()}
+    return result_dict
 
 
 # Written by: Noa Gaon
@@ -199,20 +254,18 @@ def print_statistics(grid):
     - print the number of extinct populations (each is defined by a population ids tuple)
     - The average number of ancestors a cell has.
     """
-    rows = len(grid)
-    cols = len(grid[0])
-    living_cells_counter = 0
-    fitness_score_sum = 0
-    for row in range(rows):
-        for col in range(cols):
-            if grid[row][col] != 0:
-                living_cells_counter += 1
-                fitness_score_sum += (grid[row][col]).get_fitness_score()
+    result_dict = calc_statistics(grid)
 
-    print("Number of living cells: {0}".format(living_cells_counter))
-    if living_cells_counter != 0:
-        print("Average fitness score:{0}".format(round(fitness_score_sum/living_cells_counter), 3))
-    print("The number of extinct populations: {0}".format(get_number_of_extinct_populations()))
+    # Prints
+    print("Number of living cells: {0}".format(result_dict['living_cells_counter']))
+    print("Number of populations: {0}".format(result_dict['pop_count']))
+    print("Number of extinct populations: {0}".format(result_dict['extinct_pop_count']))
+    print("Average fitness score:{0}".format(round(result_dict['avg_fitness_score']), 3))
+    print("Average num of ancestors per cell: {0}".format(round(result_dict['avg_num_of_ancestors'], 3)))
+    print("Median num of ancestors per cell: {0}".format(round(result_dict['med_num_of_ancestors'], 3)))
+    print("Most common population: {0}".format(result_dict['most_common_population']))
+    print("Variance in initial population num of appearances (as ancestors): {0}".format(round(result_dict['variance'], 3))) # Variance in initial population appearances
+    print("\n")
 
 
 # Modified by: Noa Gaon
@@ -251,11 +304,31 @@ def update_fitness_score(parent1, parent2):
     Otherwise, fitness score grows by 2 for each
     """
     if parent1.get_population_ids() == parent2.get_population_ids():
-        addend = 1
+        addend = ADDEND_INTRA_POPULATION
     else:
-        addend = 2
+        addend = ADDEND_INTER_POPULATION
     parent1.set_fitness_score(parent1.get_fitness_score() + addend)
     parent2.set_fitness_score(parent2.get_fitness_score() + addend)
+
+
+# Written by: Noa Gaon
+def is_equal_fitness_score(cell1, cell2):
+    """
+    :param cell1: Cell - a cell in the grid which fitness score we want to compare.
+    :param cell2: Cell - a cell in the grid which fitness score we want to compare.
+    :return: bool - True if fitness score is equal, False otherwise
+    """
+    return get_fitness_score_abs_diff(cell1, cell2) == 0
+
+
+# Written by: Noa Gaon
+def get_fitness_score_abs_diff(cell1, cell2):
+    """
+    :param cell1: Cell - a cell in the grid which fitness score we want to compare.
+    :param cell2: Cell - a cell in the grid which fitness score we want to compare.
+    :return: bool - True if fitness score is equal, False otherwise
+    """
+    return abs(cell1.get_fitness_score()-cell2.get_fitness_score())
 
 
 # Written by: Noa Gaon
@@ -266,16 +339,31 @@ def pick_parents(sorted_neighbors):
         Sorted in ascending order by fitness score.
     Returns: The two cells in the list with the highest fitness score.
     """
+    global MAX_FITNESS_SCORE_DIFF
+
+    # All diffs between the neighbors are less than MAX_FITNESS_SCORE_DIFF
     parents = None
-    if sorted_neighbors[0] == sorted_neighbors[1] and sorted_neighbors[0] == sorted_neighbors[2]:
+    if (is_equal_fitness_score(sorted_neighbors[0], sorted_neighbors[1]) and
+            is_equal_fitness_score(sorted_neighbors[0], sorted_neighbors[2])): # all 3 with eq scores
         parents = random.sample(sorted_neighbors, 2)
-    elif sorted_neighbors[0] == sorted_neighbors[1]:
-        parents = [random.sample([sorted_neighbors[0], sorted_neighbors[1]], 1), sorted_neighbors[2]]
-    elif sorted_neighbors[1] == sorted_neighbors[2]:
-        parents = [sorted_neighbors[0], random.sample([sorted_neighbors[1], sorted_neighbors[2]], 1)]
-    else:
-        parents = sorted_neighbors[:2]
-    return parents[0], parents[1]
+        return parents[0], parents[1]
+    elif is_equal_fitness_score(sorted_neighbors[0], sorted_neighbors[1]): # first two with eq scores
+        if get_fitness_score_abs_diff(sorted_neighbors[0], sorted_neighbors[2]) > MAX_FITNESS_SCORE_DIFF:
+            return sorted_neighbors[0], sorted_neighbors[1] # cannot reproduce with highest
+        else:
+            # CAN reproduce with [2]
+            return random.sample([sorted_neighbors[0], sorted_neighbors[1]], 1)[0], sorted_neighbors[2]
+    elif is_equal_fitness_score(sorted_neighbors[1], sorted_neighbors[2]): # last two with eq scores
+        return sorted_neighbors[1], sorted_neighbors[2]
+    else: # no two fitness scores are equal
+        if get_fitness_score_abs_diff(sorted_neighbors[1], sorted_neighbors[2]) <= MAX_FITNESS_SCORE_DIFF:
+            return sorted_neighbors[1], sorted_neighbors[2] # last two CAN reproduce
+        elif get_fitness_score_abs_diff(sorted_neighbors[0], sorted_neighbors[1]) <= MAX_FITNESS_SCORE_DIFF:
+            return sorted_neighbors[0], sorted_neighbors[1] # first two CAN reproduce
+
+    if parents:
+        return parents[0], parents[1]
+    return None, None  # No fit parents have been found
 
 
 # Modified by: Noa Gaon
@@ -299,7 +387,7 @@ def create_next_grid(grid, next_grid):
             if live_neighbors_count < 2 or live_neighbors_count > 3:
                 if grid[row][col] != 0: # if was alive
                     curr_cell_ids = (grid[row][col]).get_population_ids()
-                    population_ids_dict[curr_cell_ids]['count'] -= 1 # update the global dict
+                    POPULATION_IDS_DICT[curr_cell_ids]['count'] -= 1 # update the global dict
                 next_grid[row][col] = 0
 
             # If the number of surrounding live cells is 3 and the cell at grid[row][col] was previously dead -->
@@ -309,14 +397,13 @@ def create_next_grid(grid, next_grid):
                 for indexes in live_neighbors_list:
                     neighbors.append(grid[indexes[0]][indexes[1]])
                 sorted_neighbors = sorted(neighbors, key=lambda x: x.get_fitness_score(), reverse=True)
-
                 parent1, parent2 = pick_parents(sorted_neighbors)
-
-                update_fitness_score(parent1, parent2)
-                next_grid[row][col] = Cell(parent1.get_population_ids(), parent2.get_population_ids(),
-                                           parent1.get_fitness_score(), parent2.get_fitness_score())
-
-            # If the number of surrounding live cells is 3 and the cell at grid[row][col] is alive --> keep it alive
+                if parent1:
+                    update_fitness_score(parent1, parent2)
+                    next_grid[row][col] = Cell(parent1.get_population_ids(), parent2.get_population_ids(),
+                                               parent1.get_fitness_score(), parent2.get_fitness_score())
+                else:
+                    next_grid[row][col] = grid[row][col] # No fit parents found
             else:
                 next_grid[row][col] = grid[row][col]
 
@@ -367,8 +454,27 @@ def grid_changing(grid, next_grid):
                 return True
     return False
 
+
+# Written by: Noa Gaon
+def get_integer_value(prompt, default):
+    """
+    :param prompt: String - The string to prompt the user for input with
+    :param default: int - The default value for the integer
+    :return: The valid input value that the user entered
+    """
+    while True:
+        try:
+            value = input(prompt)
+            if value == '':
+                return default
+            value = int(value)
+            return value  # Return the integer if input is valid
+        except ValueError as e:
+            print("Invalid input. Please enter an integer.")
+
+
 # ORIGINAL CODE
-def get_integer_value(prompt, low, high):
+def get_integer_bound_value(prompt, low, high):
     """
     Asks the user for integer input and between given bounds low and high.
 
@@ -391,18 +497,44 @@ def get_integer_value(prompt, low, high):
 
 
 # Modified by: Noa Gaon
+def get_string_value(prompt, list_options, default):
+    """
+    Asks the user for string input. Accepts only
+
+    :param prompt: String - The string to prompt the user for input with
+    :param list_options: String - The letters the input string may start with
+    :return: The valid input value that the user entered
+    """
+    while True:
+        value = input(prompt)
+        if value == '':
+            return default
+        if value.lower()[0] not in list_options:
+            print("Input was not one of the following options:{0}".format(list_options))
+        return value  # Return the integer if input is valid
+
+
+# Modified by: Noa Gaon
 def run_game():
     """
     Asks the user for input to setup the Game of Life to run for a given number of generations.
 
     """
-
+    global ADDEND_INTER_POPULATION, ADDEND_INTRA_POPULATION, MAX_FITNESS_SCORE_DIFF
     clear_console()
 
     # Get the number of rows and columns for the Game of Life grid
-    rows = get_integer_value("Enter the number of rows (10-60): ", 10, 60)
+    rows = get_integer_bound_value("Enter the number of rows (10-60): ", 10, 60)
     clear_console()
-    cols = get_integer_value("Enter the number of cols (10-118): ", 10, 118)
+    cols = get_integer_bound_value("Enter the number of cols (10-118): ", 10, 118)
+    initial_option = get_string_value("Enter an initial state (random/glider/blinker. default: random: ", ['r', 'g', 'b'], 'r')
+    ADDEND_INTER_POPULATION = get_integer_value("Enter fitness score for inter-population reproduction (between populations. default: 2): ",
+                                                ADDEND_INTER_POPULATION)
+    ADDEND_INTRA_POPULATION = get_integer_value("Enter fitness score for intra-population reproduction (inside a population. default: 1): ",
+                                                ADDEND_INTRA_POPULATION)
+    MAX_FITNESS_SCORE_DIFF = get_integer_value("Enter maximum fitness score diff allowed for reproduction (default: allow all): ",
+                                               -1)
+
     clear_console()
 
     # Get the number of generations that the Game of Life should run for
@@ -410,8 +542,12 @@ def run_game():
     resize_console(rows, cols)
 
     # Create the initial random Game of Life grids
-    current_generation = create_initial_grid(rows, cols)
-    current_generation = divide_shapes(current_generation) # divide the matrix into populations
+    if initial_option.lower().startswith('r'):
+        current_generation = create_initial_grid(rows, cols)      # Random
+    else:
+        current_generation = shape_initial_configuration(rows, cols, initial_option)    # glider/blinker
+
+    current_generation = divide_shapes(current_generation)  # divide the matrix into populations
     next_generation = create_initial_grid(rows, cols)
 
     # Run Game of Life sequence
@@ -419,13 +555,14 @@ def run_game():
     for gen in range(1, generations + 1):
         if not grid_changing(current_generation, next_generation):
             break
-        print_grid(current_generation, gen) # print current grid
-        print_statistics(current_generation)# print current grid statistics
+        print_grid(current_generation, gen)     # print current grid
+        print_statistics(current_generation)    # print current grid statistics
         create_next_grid(current_generation, next_generation)
         time.sleep(1 / 5.0)
         current_generation, next_generation = next_generation, current_generation
 
     print_grid(current_generation, gen)
+    print_statistics(current_generation)
     return input("<Enter> to exit or r to run again: ")
 
 
@@ -434,4 +571,3 @@ run = "r"
 while run == "r":
     out = run_game()
     run = out
-
