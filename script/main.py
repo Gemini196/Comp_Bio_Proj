@@ -28,6 +28,16 @@ ADDEND_INTRA_POPULATION = 1 # default
 MAX_FITNESS_SCORE_DIFF = sys.maxsize # max INT
 
 
+# Written By Noa Gaon
+def reset_global_vars():
+    global HIGHEST_UNUSED_SYMBOL, POPULATION_IDS_DICT, ADDEND_INTER_POPULATION, ADDEND_INTRA_POPULATION, MAX_FITNESS_SCORE_DIFF
+    HIGHEST_UNUSED_SYMBOL = 1
+    POPULATION_IDS_DICT = {}
+    ADDEND_INTER_POPULATION = 2  # default
+    ADDEND_INTRA_POPULATION = 1  # default
+    MAX_FITNESS_SCORE_DIFF = sys.maxsize
+
+
 # Written by: Noa Gaon
 class Cell:
     """
@@ -218,6 +228,8 @@ def calc_statistics(grid):
     # Find population_ids with the maximum count
     most_common_population = [k for k, v in POPULATION_IDS_DICT.items() if v['count'] == max_appearances_count]\
         if living_cells_counter > 0 else ''
+    for i in range(len(most_common_population)):
+        most_common_population[i] = str(most_common_population[i])+'--> symbol '+str(POPULATION_IDS_DICT[most_common_population[i]]['symbol'])
 
     # Create a list of string lengths based on key-value pairs in the dictionary
     id_lengths = [len(key) for key, count in POPULATION_IDS_DICT.items() for _ in
@@ -515,7 +527,8 @@ def get_string_value(prompt, list_options, default):
 
 
 # Modified by: Noa Gaon
-def run_game():
+def run_game(rows=None, cols=None, initial_option=None, addend_inter_pop=None, addend_intra_pop=None,
+             max_fitness_score_diff=None):
     """
     Asks the user for input to setup the Game of Life to run for a given number of generations.
 
@@ -523,22 +536,27 @@ def run_game():
     global ADDEND_INTER_POPULATION, ADDEND_INTRA_POPULATION, MAX_FITNESS_SCORE_DIFF
     clear_console()
 
-    # Get the number of rows and columns for the Game of Life grid
-    rows = get_integer_bound_value("Enter the number of rows (10-60): ", 10, 60)
-    clear_console()
-    cols = get_integer_bound_value("Enter the number of cols (10-118): ", 10, 118)
-    initial_option = get_string_value("Enter an initial state (random/glider/blinker. default: random: ", ['r', 'g', 'b'], 'r')
-    ADDEND_INTER_POPULATION = get_integer_value("Enter fitness score for inter-population reproduction (between populations. default: 2): ",
-                                                ADDEND_INTER_POPULATION)
-    ADDEND_INTRA_POPULATION = get_integer_value("Enter fitness score for intra-population reproduction (inside a population. default: 1): ",
-                                                ADDEND_INTRA_POPULATION)
-    MAX_FITNESS_SCORE_DIFF = get_integer_value("Enter maximum fitness score diff allowed for reproduction (default: allow all): ",
-                                               -1)
+    ADDEND_INTER_POPULATION = addend_inter_pop
+    ADDEND_INTRA_POPULATION = addend_intra_pop
+    MAX_FITNESS_SCORE_DIFF = max_fitness_score_diff
+
+    if not rows:
+        # Get the number of rows and columns for the Game of Life grid from user
+        rows = get_integer_bound_value("Enter the number of rows (10-60): ", 10, 60)
+        clear_console()
+        cols = get_integer_bound_value("Enter the number of cols (10-118): ", 10, 118)
+        initial_option = get_string_value("Enter an initial state (random/glider/blinker. default: random: ", ['r', 'g', 'b'], 'r')
+        ADDEND_INTER_POPULATION = get_integer_value("Enter fitness score for inter-population reproduction (between populations. default: 2): ",
+                                                    ADDEND_INTER_POPULATION)
+        ADDEND_INTRA_POPULATION = get_integer_value("Enter fitness score for intra-population reproduction (inside a population. default: 1): ",
+                                                    ADDEND_INTRA_POPULATION)
+        MAX_FITNESS_SCORE_DIFF = get_integer_value("Enter maximum fitness score diff allowed for reproduction (default: allow all): ",
+                                                   -1)
 
     clear_console()
 
     # Get the number of generations that the Game of Life should run for
-    generations = 5000
+    generations = 70
     resize_console(rows, cols)
 
     # Create the initial random Game of Life grids
@@ -563,11 +581,19 @@ def run_game():
 
     print_grid(current_generation, gen)
     print_statistics(current_generation)
-    return input("<Enter> to exit or r to run again: ")
+
+    return None
+    # add_to_csv(gen, is_loop, run_time_sec)
 
 
+# Modified by: Noa Gaon
 # Start the Game of Life
 run = "r"
 while run == "r":
-    out = run_game()
-    run = out
+    num_runs = 3
+    for i in range(num_runs):
+        print("---- Game of Life No. {0} ----\n----------------------------".format(i+1))
+        run_game(rows=10, cols=10, initial_option='random', addend_inter_pop=2, addend_intra_pop=1,
+                 max_fitness_score_diff=10)
+        reset_global_vars()
+    run = input("<Enter> to exit or r to run again: ")
