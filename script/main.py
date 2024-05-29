@@ -7,6 +7,9 @@ import sys
 import math
 import statistics
 from initial_states import shape_initial_configuration
+import game_config
+import matplotlib.pyplot as plt
+from clustering import clustering_results
 
 ################ Global variables ################
 '''
@@ -26,7 +29,8 @@ POPULATION_IDS_DICT = {}
 ADDEND_INTER_POPULATION = 2 # default
 ADDEND_INTRA_POPULATION = 1 # default
 MAX_FITNESS_SCORE_DIFF = sys.maxsize # max INT
-
+MAX_GENERATIONS = 150
+NUM_GAMES = 20
 
 # Written By Noa Gaon
 def reset_global_vars():
@@ -46,7 +50,8 @@ class Cell:
     fitness_score = 1     # int
     population_ids = None #tuple
 
-    def __init__(self, population_ids1, population_ids2=None, fitness_score1=None, fitness_score2=None):
+    def __init__(self, population_ids1, population_ids2=None, fitness_score1=None, fitness_score2=None,
+                 custom_symbol=None):
         global HIGHEST_UNUSED_SYMBOL, POPULATION_IDS_DICT
         self.population_ids = tuple(population_ids1) # Case 1: cell is an initial cell (no parents)
         if population_ids2:                   # Case 2: cell created by two parent cells
@@ -54,11 +59,19 @@ class Cell:
             self.fitness_score = math.floor((fitness_score1+fitness_score2)/2)
 
         if self.population_ids not in POPULATION_IDS_DICT: # New population (no matching symbol)
+            if custom_symbol:
+                symb = custom_symbol # custom new symbol
+                if HIGHEST_UNUSED_SYMBOL <= symb:
+                    HIGHEST_UNUSED_SYMBOL = symb + 1
+            else:
+                symb = HIGHEST_UNUSED_SYMBOL # default new symbol
+                HIGHEST_UNUSED_SYMBOL += 1
+
             POPULATION_IDS_DICT[self.population_ids] = {
-                'symbol': HIGHEST_UNUSED_SYMBOL,
+                'symbol': symb,
                 'count': 1
             }
-            HIGHEST_UNUSED_SYMBOL += 1
+
         else:
             POPULATION_IDS_DICT[self.population_ids]['count'] += 1
 
@@ -91,7 +104,7 @@ def get_new_population_ids(population_ids1, population_ids2):
     unique_set = set(combined_population_ids)  # Remove duplicates
     return tuple(sorted(unique_set))
 
-
+'''
 # Written by: Noa Gaon
 def dfs(grid, i, j, symbol):
     """
@@ -113,6 +126,7 @@ def dfs(grid, i, j, symbol):
 
 
 # Written by: Noa Gaon
+
 def divide_shapes(grid):
     """
     Args:
@@ -120,11 +134,33 @@ def divide_shapes(grid):
 
     Returns:  a grid such that each continuous block of "living" cells is marked by a different symbol.
     """
-    global HIGHEST_UNUSED_SYMBOL, POPULATION_IDS_DICT
+    global HIGHEST_UNUSED_SYMBOL
     for i in range(len(grid)):
         for j in range(len(grid[0])):
             if grid[i][j] == 1: # living cell
                 dfs(grid, i, j, HIGHEST_UNUSED_SYMBOL)
+    return grid
+'''
+
+
+# Written by: Noa Gaon
+def divide_into_populations(grid, pop_num):
+    """
+    Args:
+        grid: an initial grid (containing only 0s and 1s)
+        pop_num: the number of distinct initial populations.
+
+    Returns:  a grid such that each cell is marked by a different symbol.
+    (each cell gets the symbol X with a probability of 1/#population_num)
+    """
+    pop_symb_lst = list(range(1, pop_num))
+    global HIGHEST_UNUSED_SYMBOL
+    for i in range(len(grid)):
+        for j in range(len(grid[0])):
+            if grid[i][j] == 1: # living cell
+                symbol = random.randint(1, pop_num)
+                grid[i][j] = Cell(population_ids1=tuple([symbol]), custom_symbol=symbol)
+
     return grid
 
 
@@ -134,7 +170,6 @@ def clear_console():
     Clears the console using a system command based on the user's operating system.
 
     """
-
     if sys.platform.startswith('win'):
         os.system("cls")
     elif sys.platform.startswith('linux'):
@@ -194,7 +229,7 @@ def create_initial_grid(rows, cols):
 
 
 # Written by: Noa Gaon
-def calculate_variance():
+def get_variance_for_init():
     """
     :return: The variance of an initial population_id appearing in different populations
     """
@@ -205,11 +240,36 @@ def calculate_variance():
     for key in POPULATION_IDS_DICT:
         for pop_id in key:
             init_pop_counts[pop_id] = init_pop_counts.get(pop_id, 0) + POPULATION_IDS_DICT[key]['count']
-    # Calculate variance based on string counts
-    mean_count = sum(init_pop_counts.values()) / len(init_pop_counts)
+    mean_count = sum(init_pop_counts.values()) / len(init_pop_counts) # Calculate variance based on string counts
     variance = sum((count - mean_count) ** 2 for count in init_pop_counts.values()) / len(init_pop_counts)
-
     return variance
+
+
+# Written By: Noa Gaon
+def get_avg_ancestry_dist():
+    """
+    :return: The average distance between the ancestry of populations on board.
+            (Each mismatch adds +1 to distance between cells)
+    """
+    global POPULATION_IDS_DICT
+    total_distances = 0
+    total_occurrences = 0
+
+    for key, item in POPULATION_IDS_DICT.items():
+        strings = list(key)
+        occurrences = []
+        for string in strings:
+            # Find all occurrences of the string in the key
+            indices = [i for i, s in enumerate(strings) if s == string]
+            occurrences.extend(indices)
+
+        # Calculate distances between occurrences
+        distances = [j - i for i, j in zip(occurrences[:-1], occurrences[1:])]
+
+        # Sum distances and occurrences
+        total_distances += sum(distances) * item['count']
+        total_occurrences += len(occurrences) * item['count']
+    return total_distances / total_occurrences if total_occurrences > 0 else 0  # Avoid division by zero
 
 
 # Written by: Noa Gaon
@@ -237,11 +297,13 @@ def calc_statistics(grid):
     id_len_sum = sum(id_lengths)
 
     # Calculate averages
-    avg_fitness_score = fitness_score_sum / living_cells_counter if living_cells_counter > 0 else 0
-    avg_num_of_ancestors = id_len_sum / living_cells_counter if living_cells_counter > 0 else 0
+    avg_fitness_score = fitness_score_sum / living_cells_counter if living_cells_counter > 0 else 0 # Avoid division by zero
+    avg_num_of_ancestors = id_len_sum / living_cells_counter if living_cells_counter > 0 else 0 # Avoid division by zero
 
     id_lengths.sort()  # Sort the list of string lengths
-    med_num_of_ancestors = statistics.median(id_lengths) if living_cells_counter > 0 else 0  # Calculate the median
+    med_num_of_ancestors = statistics.median(id_lengths) if living_cells_counter > 0 else 0  # Calculate the median (+Avoid division by zero)
+
+    avg_ancestry_dist = get_avg_ancestry_dist()
 
     result_dict = {'living_cells_counter': living_cells_counter,
                    'extinct_pop_count': extinct_pop_count,
@@ -250,15 +312,17 @@ def calc_statistics(grid):
                    'avg_num_of_ancestors': avg_num_of_ancestors,
                    'med_num_of_ancestors': med_num_of_ancestors,
                    'most_common_population': most_common_population,
-                   'variance': calculate_variance()}
+                   'avg_ancestry_dist': avg_ancestry_dist,
+                   'init_variance': get_variance_for_init()}
+
     return result_dict
 
 
 # Written by: Noa Gaon
-def print_statistics(grid):
+def print_statistics(statistics_dict):
     """
     Args:
-        grid: A matrix with each cell containing either 0 (dead cell) or a Cell object
+        grid: A dictionary with statistical data about the current generation grid.
 
     Prints:
     - The number of living cells on the board.
@@ -266,17 +330,16 @@ def print_statistics(grid):
     - print the number of extinct populations (each is defined by a population ids tuple)
     - The average number of ancestors a cell has.
     """
-    result_dict = calc_statistics(grid)
-
     # Prints
-    print("Number of living cells: {0}".format(result_dict['living_cells_counter']))
-    print("Number of populations: {0}".format(result_dict['pop_count']))
-    print("Number of extinct populations: {0}".format(result_dict['extinct_pop_count']))
-    print("Average fitness score:{0}".format(round(result_dict['avg_fitness_score']), 3))
-    print("Average num of ancestors per cell: {0}".format(round(result_dict['avg_num_of_ancestors'], 3)))
-    print("Median num of ancestors per cell: {0}".format(round(result_dict['med_num_of_ancestors'], 3)))
-    print("Most common population: {0}".format(result_dict['most_common_population']))
-    print("Variance in initial population num of appearances (as ancestors): {0}".format(round(result_dict['variance'], 3))) # Variance in initial population appearances
+    print("Number of living cells: {0}".format(statistics_dict['living_cells_counter']))
+    print("Number of populations: {0}".format(statistics_dict['pop_count']))
+    print("Number of extinct populations: {0}".format(statistics_dict['extinct_pop_count']))
+    print("Average fitness score:{0}".format(round(statistics_dict['avg_fitness_score']), 3))
+    print("Average num of ancestors per cell: {0}".format(round(statistics_dict['avg_num_of_ancestors'], 3)))
+    print("Median num of ancestors per cell: {0}".format(round(statistics_dict['med_num_of_ancestors'], 3)))
+    print("Most common population: {0}".format(statistics_dict['most_common_population']))
+    #print("Average ancestry dist: {0}".format(round(result_dict['avg_ancestry_dist'], 3))) #REWRITE!!
+    print("Variance in initial population num of appearances (as ancestors): {0}".format(round(statistics_dict['init_variance'], 3))) # Variance in initial population appearances
     print("\n")
 
 
@@ -353,6 +416,12 @@ def pick_parents(sorted_neighbors):
     """
     global MAX_FITNESS_SCORE_DIFF
 
+    # in case of 2 neighbors:
+    if len(sorted_neighbors) == 2:
+        if get_fitness_score_abs_diff(sorted_neighbors[0], sorted_neighbors[1]) <= MAX_FITNESS_SCORE_DIFF:
+            return sorted_neighbors[0], sorted_neighbors[1]  # CAN reproduce
+        return None, None  # No fit parents have been found
+
     # All diffs between the neighbors are less than MAX_FITNESS_SCORE_DIFF
     parents = None
     if (is_equal_fitness_score(sorted_neighbors[0], sorted_neighbors[1]) and
@@ -402,13 +471,13 @@ def create_next_grid(grid, next_grid):
                     POPULATION_IDS_DICT[curr_cell_ids]['count'] -= 1 # update the global dict
                 next_grid[row][col] = 0
 
-            # If the number of surrounding live cells is 3 and the cell at grid[row][col] was previously dead -->
+            # If the number of surrounding live cells is 3 OR 2 and the cell at grid[row][col] was previously dead -->
             # turn the cell into a live cell
-            elif live_neighbors_count == 3 and grid[row][col] == 0:
+            elif (live_neighbors_count==2 or live_neighbors_count == 3) and grid[row][col] == 0:
                 neighbors = []
                 for indexes in live_neighbors_list:
                     neighbors.append(grid[indexes[0]][indexes[1]])
-                sorted_neighbors = sorted(neighbors, key=lambda x: x.get_fitness_score(), reverse=True)
+                sorted_neighbors = sorted(neighbors, key=lambda x: x.get_fitness_score())
                 parent1, parent2 = pick_parents(sorted_neighbors)
                 if parent1:
                     update_fitness_score(parent1, parent2)
@@ -526,8 +595,28 @@ def get_string_value(prompt, list_options, default):
         return value  # Return the integer if input is valid
 
 
+# Creates a plot that tracks the living cells number across all iterations
+def plot_generation_track(living_cells_num_track, avg_fitness_score_track, avg_num_of_ancestors_track,
+                          generations, title):
+    plt.cla() # Clear previous plot
+
+    # Setting x-axis ticks to integers only
+    plt.xticks(range(min(generations), max(generations) + 1, 1))
+
+    plt.plot(generations, living_cells_num_track, label='living cells num')
+    plt.plot(generations, avg_fitness_score_track, label='avg fitness score ')
+    plt.plot(generations, avg_num_of_ancestors_track, label='avg num of ancestors')
+
+    # Add labels, legend, etc.
+    plt.xlabel('Generation No.')
+    plt.ylabel('Count')
+    plt.title(f'Counts per Generation: {title}')
+    plt.legend()
+    plt.show()
+
+
 # Modified by: Noa Gaon
-def run_game(rows=None, cols=None, initial_option=None, addend_inter_pop=None, addend_intra_pop=None,
+def run_game(rows=None, cols=None, pop_num=None, initial_option=None, addend_inter_pop=None, addend_intra_pop=None,
              max_fitness_score_diff=None):
     """
     Asks the user for input to setup the Game of Life to run for a given number of generations.
@@ -545,6 +634,7 @@ def run_game(rows=None, cols=None, initial_option=None, addend_inter_pop=None, a
         rows = get_integer_bound_value("Enter the number of rows (10-60): ", 10, 60)
         clear_console()
         cols = get_integer_bound_value("Enter the number of cols (10-118): ", 10, 118)
+        pop_num = get_integer_value("Enter the number of populations (default 2): ", 2)
         initial_option = get_string_value("Enter an initial state (random/glider/blinker. default: random: ", ['r', 'g', 'b'], 'r')
         ADDEND_INTER_POPULATION = get_integer_value("Enter fitness score for inter-population reproduction (between populations. default: 2): ",
                                                     ADDEND_INTER_POPULATION)
@@ -556,7 +646,7 @@ def run_game(rows=None, cols=None, initial_option=None, addend_inter_pop=None, a
     clear_console()
 
     # Get the number of generations that the Game of Life should run for
-    generations = 70
+    generations = MAX_GENERATIONS
     resize_console(rows, cols)
 
     # Create the initial random Game of Life grids
@@ -564,9 +654,14 @@ def run_game(rows=None, cols=None, initial_option=None, addend_inter_pop=None, a
         current_generation = create_initial_grid(rows, cols)      # Random
     else:
         current_generation = shape_initial_configuration(rows, cols, initial_option)    # glider/blinker
-
-    current_generation = divide_shapes(current_generation)  # divide the matrix into populations
+    current_generation = divide_into_populations(current_generation, pop_num)  # divide the matrix into populations
     next_generation = create_initial_grid(rows, cols)
+
+    # Track changes in living cell num
+    living_cells_num_track = []
+    extinct_populations_num_track = []
+    avg_fitness_score_track = []
+    avg_num_of_ancestors_track = []
 
     # Run Game of Life sequence
     gen = 1
@@ -574,26 +669,65 @@ def run_game(rows=None, cols=None, initial_option=None, addend_inter_pop=None, a
         if not grid_changing(current_generation, next_generation):
             break
         print_grid(current_generation, gen)     # print current grid
-        print_statistics(current_generation)    # print current grid statistics
+
+        statistics_dict = calc_statistics(current_generation)
+        print_statistics(statistics_dict) # print current grid statistics
+
+        living_cells_num_track.append(statistics_dict["living_cells_counter"])
+        extinct_populations_num_track.append(statistics_dict["extinct_pop_count"])
+        avg_fitness_score_track.append(statistics_dict["avg_fitness_score"])
+        avg_num_of_ancestors_track.append(statistics_dict["avg_num_of_ancestors"])
+
         create_next_grid(current_generation, next_generation)
         time.sleep(1 / 5.0)
         current_generation, next_generation = next_generation, current_generation
 
     print_grid(current_generation, gen)
-    print_statistics(current_generation)
+    statistics_dict = calc_statistics(current_generation)
+    print_statistics(statistics_dict)
 
-    return None
-    # add_to_csv(gen, is_loop, run_time_sec)
+    living_cells_num_track.append(statistics_dict["living_cells_counter"])
+    extinct_populations_num_track.append(statistics_dict["extinct_pop_count"])
+    avg_fitness_score_track.append(statistics_dict["avg_fitness_score"])
+    avg_num_of_ancestors_track.append(statistics_dict["avg_num_of_ancestors"])
+
+    if gen == generations:
+        gen += 1
+
+    #plot_generation_track(living_cells_num_track, avg_fitness_score_track,
+    #                      avg_num_of_ancestors_track, range(1, gen+1), "")
+
+    # returns stats for a SINGLE game that ran for gen+1 generations
+    return living_cells_num_track, avg_fitness_score_track, avg_num_of_ancestors_track
 
 
-# Modified by: Noa Gaon
+# Written by: Noa Gaon
+
 # Start the Game of Life
 run = "r"
+
 while run == "r":
-    num_runs = 3
+    game_properties = game_config.game6
+    num_runs = NUM_GAMES
+    results = []
     for i in range(num_runs):
         print("---- Game of Life No. {0} ----\n----------------------------".format(i+1))
-        run_game(rows=10, cols=10, initial_option='random', addend_inter_pop=2, addend_intra_pop=1,
-                 max_fitness_score_diff=10)
+        res = run_game(rows=game_properties['rows'],
+                 cols=game_properties['cols'],
+                 pop_num=game_properties['pop_num'],
+                 initial_option=game_properties['initial_option'],
+                 addend_inter_pop=game_properties['addend_inter_pop'],
+                 addend_intra_pop=game_properties['addend_intra_pop'],
+                 max_fitness_score_diff=game_properties['max_fitness_score_diff'])
+        results.append(res)
         reset_global_vars()
+
+    cluster_averages = clustering_results(results, MAX_GENERATIONS)
+
+    count = 1
+    for clus in cluster_averages:
+        plot_generation_track(clus[0], clus[1], clus[2], range(1, MAX_GENERATIONS+1),
+                              f'Avg Ending No.{count},\n{num_runs} games, max_gen:{MAX_GENERATIONS}')
+        count += 1
+
     run = input("<Enter> to exit or r to run again: ")
